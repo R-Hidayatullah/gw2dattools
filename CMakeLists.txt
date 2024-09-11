@@ -1,6 +1,7 @@
+cmake_minimum_required(VERSION 3.5)
+
 project(libgw2dattools)
 
-cmake_minimum_required(VERSION 3.0)
 
 # Set a default build type if none was specified
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -11,8 +12,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     "MinSizeRel" "RelWithDebInfo")
 endif()
 
-# Set options
-option(BUILD_EXAMPLES "Build the examples." OFF)
+
 
 # libgw2dattools
 
@@ -64,10 +64,8 @@ set_property(TARGET gw2dattools PROPERTY VERSION ${LIBGW2DATTOOLS_VERSION})
 set_property(TARGET gw2dattools PROPERTY SOVERSION ${LIBGW2DATTOOLS_VERSION_MAJOR})
 set_property(TARGET gw2dattools PROPERTY DEBUG_POSTFIX d)
 
-# samples
-if(BUILD_EXAMPLES)
-    add_subdirectory(examples)
-endif()
+
+add_subdirectory(examples)
 
 # installation - spefify files to package
 install(TARGETS gw2dattools EXPORT libgw2dattoolsTargets
