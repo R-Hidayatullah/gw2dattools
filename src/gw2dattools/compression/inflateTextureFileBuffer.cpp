@@ -96,27 +96,14 @@ namespace gw2dt
                 // Initialize our workingTabs
                 memset(&aWorkingBitTab, 0xFF, MaxCodeBitsLength * sizeof(int16_t));
                 memset(&aWorkingCodeTab, 0xFF, MaxSymbolValue * sizeof(int16_t));
-
-                fillWorkingTabsHelper(1, 0x01, &aWorkingBitTab[0], &aWorkingCodeTab[0]);
-
-                fillWorkingTabsHelper(2, 0x12, &aWorkingBitTab[0], &aWorkingCodeTab[0]);
-
-                fillWorkingTabsHelper(6, 0x11, &aWorkingBitTab[0], &aWorkingCodeTab[0]);
-                fillWorkingTabsHelper(6, 0x10, &aWorkingBitTab[0], &aWorkingCodeTab[0]);
-                fillWorkingTabsHelper(6, 0x0F, &aWorkingBitTab[0], &aWorkingCodeTab[0]);
-                fillWorkingTabsHelper(6, 0x0E, &aWorkingBitTab[0], &aWorkingCodeTab[0]);
-                fillWorkingTabsHelper(6, 0x0D, &aWorkingBitTab[0], &aWorkingCodeTab[0]);
-                fillWorkingTabsHelper(6, 0x0C, &aWorkingBitTab[0], &aWorkingCodeTab[0]);
-                fillWorkingTabsHelper(6, 0x0B, &aWorkingBitTab[0], &aWorkingCodeTab[0]);
-                fillWorkingTabsHelper(6, 0x0A, &aWorkingBitTab[0], &aWorkingCodeTab[0]);
-                fillWorkingTabsHelper(6, 0x09, &aWorkingBitTab[0], &aWorkingCodeTab[0]);
-                fillWorkingTabsHelper(6, 0x08, &aWorkingBitTab[0], &aWorkingCodeTab[0]);
-                fillWorkingTabsHelper(6, 0x07, &aWorkingBitTab[0], &aWorkingCodeTab[0]);
-                fillWorkingTabsHelper(6, 0x06, &aWorkingBitTab[0], &aWorkingCodeTab[0]);
-                fillWorkingTabsHelper(6, 0x05, &aWorkingBitTab[0], &aWorkingCodeTab[0]);
-                fillWorkingTabsHelper(6, 0x04, &aWorkingBitTab[0], &aWorkingCodeTab[0]);
-                fillWorkingTabsHelper(6, 0x03, &aWorkingBitTab[0], &aWorkingCodeTab[0]);
-                fillWorkingTabsHelper(6, 0x02, &aWorkingBitTab[0], &aWorkingCodeTab[0]);
+                std::vector<int> symbols = {0x01, 0x12, 0x11, 0x10, 0x0F, 0x0E, 0x0D, 0x0C, 0x0B, 0x0A, 0x09, 0x08, 0x07, 0x06, 0x05,
+                                            0x04, 0x03, 0x02};
+                std::vector<int> bitLengths = {1, 2, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6};
+                // Add each symbol with its corresponding bit length
+                for (size_t i = 0; i < symbols.size(); ++i)
+                {
+                    fillWorkingTabsHelper(bitLengths[i], symbols[i], &aWorkingBitTab[0], &aWorkingCodeTab[0]);
+                }
 
                 return buildHuffmanTree(sHuffmanTreeDict, &aWorkingBitTab[0], &aWorkingCodeTab[0]);
             }

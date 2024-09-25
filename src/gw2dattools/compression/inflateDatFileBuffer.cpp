@@ -8,6 +8,7 @@
 
 #include "HuffmanTree.h"
 #include "../utils/BitArray.h"
+#include <vector>
 
 namespace gw2dt
 {
@@ -15,254 +16,221 @@ namespace gw2dt
     {
         namespace dat
         {
+            // Constants for Huffman decoding
+            const uint32_t maxBitsForHash = 8;
+            const uint32_t maxCodeBitsLength = 32;
+            const uint32_t maxSymbolValue = 285;
 
-            const uint32_t sDatFileNbBitsHash = 8;
-            const uint32_t sDatFileMaxCodeBitsLength = 32;
-            const uint32_t sDatFileMaxSymbolValue = 285;
-
+            // Type definitions for bit arrays and Huffman trees
             typedef utils::BitArray<uint32_t> DatFileBitArray;
-            typedef HuffmanTree<uint16_t, sDatFileNbBitsHash, sDatFileMaxCodeBitsLength, sDatFileMaxSymbolValue> DatFileHuffmanTree;
-            typedef HuffmanTreeBuilder<uint16_t, sDatFileMaxCodeBitsLength, sDatFileMaxSymbolValue> DatFileHuffmanTreeBuilder;
+            using DatFileHuffmanTree = HuffmanTree<uint16_t, maxBitsForHash, maxCodeBitsLength, maxSymbolValue>;
+            using DatFileHuffmanTreeBuilder = HuffmanTreeBuilder<uint16_t, maxCodeBitsLength, maxSymbolValue>;
 
-            static DatFileHuffmanTree sDatFileHuffmanTreeDict;
+            // Static Huffman tree dictionary
+            static DatFileHuffmanTree huffmanTreeDictionary;
 
-            // Parse and build a huffmanTree
-            bool parseHuffmanTree(DatFileBitArray &ioInputBitArray, DatFileHuffmanTree &ioHuffmanTree, DatFileHuffmanTreeBuilder &ioHuffmanTreeBuilder)
+            // Parse and build a Huffman tree from input data
+            bool parseHuffmanTree(DatFileBitArray &inputBitArray, DatFileHuffmanTree &huffmanTree, DatFileHuffmanTreeBuilder &huffmanTreeBuilder)
             {
-                // Reading the number of symbols to read
-                uint16_t aNumberOfSymbols;
-                ioInputBitArray.read(aNumberOfSymbols);
-                ioInputBitArray.drop<uint16_t>();
+                // Read the number of symbols
+                uint16_t numberOfSymbols;
+                inputBitArray.read(numberOfSymbols);
+                inputBitArray.drop<uint16_t>();
 
-                if (aNumberOfSymbols > sDatFileMaxSymbolValue)
+                if (numberOfSymbols > maxSymbolValue)
                 {
                     throw exception::Exception("Too many symbols to decode.");
                 }
 
-                ioHuffmanTreeBuilder.clear();
+                huffmanTreeBuilder.clear();
+                int16_t remainingSymbols = numberOfSymbols - 1;
 
-                int16_t aRemainingSymbols = aNumberOfSymbols - 1;
-
-                // Fetching the code repartition
-                while (aRemainingSymbols >= 0)
+                // Decode symbols from the bit array
+                while (remainingSymbols >= 0)
                 {
-                    uint16_t aCode;
+                    uint16_t code;
+                    huffmanTreeDictionary.readCode(inputBitArray, code);
 
-                    sDatFileHuffmanTreeDict.readCode(ioInputBitArray, aCode);
+                    uint8_t codeBits = code & 0x1F;
+                    uint16_t numSymbols = (code >> 5) + 1;
 
-                    uint8_t aCodeNumberOfBits = aCode & 0x1F;
-                    uint16_t aCodeNumberOfSymbols = (aCode >> 5) + 1;
-
-                    if (aCodeNumberOfBits == 0)
+                    if (codeBits == 0)
                     {
-                        aRemainingSymbols -= aCodeNumberOfSymbols;
+                        remainingSymbols -= numSymbols; // No bits, so skip these symbols
                     }
                     else
                     {
-                        while (aCodeNumberOfSymbols > 0)
+                        while (numSymbols > 0)
                         {
-                            ioHuffmanTreeBuilder.addSymbol(aRemainingSymbols, aCodeNumberOfBits);
-                            --aRemainingSymbols;
-                            --aCodeNumberOfSymbols;
+                            huffmanTreeBuilder.addSymbol(remainingSymbols--, codeBits);
+                            --numSymbols;
                         }
                     }
                 }
 
-                return ioHuffmanTreeBuilder.buildHuffmanTree(ioHuffmanTree);
+                return huffmanTreeBuilder.buildHuffmanTree(huffmanTree);
             }
 
-            void inflatedata(DatFileBitArray &ioInputBitArray, uint32_t iOutputSize, uint8_t *ioOutputTab)
+            // Inflate data from a compressed bit array into an output buffer
+            void inflateData(DatFileBitArray &inputBitArray, uint32_t outputSize, uint8_t *outputBuffer)
             {
-                uint32_t anOutputPos = 0;
+                uint32_t outputPos = 0;
 
-                // Reading the const write size addition value
-                ioInputBitArray.drop<4>();
-                uint16_t aWriteSizeConstAdd;
-                ioInputBitArray.read<4>(aWriteSizeConstAdd);
-                aWriteSizeConstAdd += 1;
-                ioInputBitArray.drop<4>();
+                // Skip some initial bits and read a constant addition for write size
+                inputBitArray.drop<4>();
+                uint16_t writeSizeConstAdd;
+                inputBitArray.read<4>(writeSizeConstAdd);
+                writeSizeConstAdd += 1;
+                inputBitArray.drop<4>();
 
-                // Declaring our HuffmanTrees
-                DatFileHuffmanTree aHuffmanTreeSymbol;
-                DatFileHuffmanTree aHuffmanTreeCopy;
+                // Huffman trees for symbols and copy operations
+                DatFileHuffmanTree huffmanTreeSymbol, huffmanTreeCopy;
+                DatFileHuffmanTreeBuilder huffmanTreeBuilder;
 
-                DatFileHuffmanTreeBuilder aHuffmanTreeBuilder;
-
-                while (anOutputPos < iOutputSize)
+                while (outputPos < outputSize)
                 {
-                    // Reading HuffmanTrees
-                    if (!parseHuffmanTree(ioInputBitArray, aHuffmanTreeSymbol, aHuffmanTreeBuilder) || !parseHuffmanTree(ioInputBitArray, aHuffmanTreeCopy, aHuffmanTreeBuilder))
+                    // Parse both Huffman trees
+                    if (!parseHuffmanTree(inputBitArray, huffmanTreeSymbol, huffmanTreeBuilder) ||
+                        !parseHuffmanTree(inputBitArray, huffmanTreeCopy, huffmanTreeBuilder))
                     {
                         break;
                     }
 
-                    // Reading MaxCount
-                    uint32_t aMaxCount;
-                    ioInputBitArray.read<4>(aMaxCount);
-                    aMaxCount = (aMaxCount + 1) << 12;
-                    ioInputBitArray.drop<4>();
+                    // Read the max count of codes
+                    uint32_t maxCount;
+                    inputBitArray.read<4>(maxCount);
+                    maxCount = (maxCount + 1) << 12;
+                    inputBitArray.drop<4>();
 
-                    uint32_t aCurrentCodeReadCount = 0;
+                    uint32_t codeReadCount = 0;
 
-                    while ((aCurrentCodeReadCount < aMaxCount) &&
-                           (anOutputPos < iOutputSize))
+                    while (codeReadCount < maxCount && outputPos < outputSize)
                     {
-                        ++aCurrentCodeReadCount;
+                        ++codeReadCount;
 
-                        // Reading next code
-                        uint16_t aSymbol = 0;
-                        aHuffmanTreeSymbol.readCode(ioInputBitArray, aSymbol);
+                        // Read the next symbol code
+                        uint16_t symbol = 0;
+                        huffmanTreeSymbol.readCode(inputBitArray, symbol);
 
-                        if (aSymbol < 0x100)
+                        if (symbol < 0x100)
                         {
-                            ioOutputTab[anOutputPos] = static_cast<uint8_t>(aSymbol);
-                            ++anOutputPos;
+                            // Directly write the symbol as a byte
+                            outputBuffer[outputPos++] = static_cast<uint8_t>(symbol);
                             continue;
                         }
 
-                        // We are in copy mode !
-                        // Reading the additional info to know the write size
-                        aSymbol -= 0x100;
+                        // Handle copy mode for repeated data
+                        symbol -= 0x100;
 
-                        // write size
-                        div_t aCodeDiv4 = div(aSymbol, 4);
+                        // Calculate write size
+                        div_t symbolDiv4 = div(symbol, 4);
+                        uint32_t writeSize = (symbolDiv4.quot == 0) ? symbol
+                                                                    : (symbolDiv4.quot < 7 ? ((1 << (symbolDiv4.quot - 1)) * (4 + symbolDiv4.rem))
+                                                                                           : (symbol == 28 ? 0xFF : throw exception::Exception("Invalid write size code.")));
 
-                        uint32_t aWriteSize = 0;
-                        if (aCodeDiv4.quot == 0)
+                        // Handle additional bits for write size
+                        if (symbolDiv4.quot > 1 && symbol != 28)
                         {
-                            aWriteSize = aSymbol;
+                            uint8_t additionalBits = static_cast<uint8_t>(symbolDiv4.quot - 1);
+                            uint32_t additionalSize;
+                            inputBitArray.read(additionalBits, additionalSize);
+                            writeSize |= additionalSize;
+                            inputBitArray.drop(additionalBits);
                         }
-                        else if (aCodeDiv4.quot < 7)
-                        {
-                            aWriteSize = ((1 << (aCodeDiv4.quot - 1)) * (4 + aCodeDiv4.rem));
-                        }
-                        else if (aSymbol == 28)
-                        {
-                            aWriteSize = 0xFF;
-                        }
-                        else
-                        {
-                            throw exception::Exception("Invalid value for writeSize code.");
-                        }
+                        writeSize += writeSizeConstAdd;
 
-                        // additional bits
-                        if (aCodeDiv4.quot > 1 && aSymbol != 28)
-                        {
-                            uint8_t aWriteSizeAddBits = static_cast<uint8_t>(aCodeDiv4.quot - 1);
-                            uint32_t aWriteSizeAdd;
-                            ioInputBitArray.read(aWriteSizeAddBits, aWriteSizeAdd);
-                            aWriteSize |= aWriteSizeAdd;
-                            ioInputBitArray.drop(aWriteSizeAddBits);
-                        }
-                        aWriteSize += aWriteSizeConstAdd;
+                        // Calculate write offset
+                        huffmanTreeCopy.readCode(inputBitArray, symbol);
+                        div_t symbolDiv2 = div(symbol, 2);
+                        uint32_t writeOffset = (symbolDiv2.quot == 0) ? symbol
+                                                                      : (symbolDiv2.quot < 17 ? ((1 << (symbolDiv2.quot - 1)) * (2 + symbolDiv2.rem))
+                                                                                              : throw exception::Exception("Invalid write offset code."));
 
-                        // write offset
-                        // Reading the write offset
-                        aHuffmanTreeCopy.readCode(ioInputBitArray, aSymbol);
-
-                        div_t aCodeDiv2 = div(aSymbol, 2);
-
-                        uint32_t aWriteOffset = 0;
-                        if (aCodeDiv2.quot == 0)
+                        // Handle additional bits for write offset
+                        if (symbolDiv2.quot > 1)
                         {
-                            aWriteOffset = aSymbol;
+                            uint8_t offsetAddBits = static_cast<uint8_t>(symbolDiv2.quot - 1);
+                            uint32_t offsetAdd;
+                            inputBitArray.read(offsetAddBits, offsetAdd);
+                            writeOffset |= offsetAdd;
+                            inputBitArray.drop(offsetAddBits);
                         }
-                        else if (aCodeDiv2.quot < 17)
-                        {
-                            aWriteOffset = ((1 << (aCodeDiv2.quot - 1)) * (2 + aCodeDiv2.rem));
-                        }
-                        else
-                        {
-                            throw exception::Exception("Invalid value for writeOffset code.");
-                        }
+                        writeOffset += 1;
 
-                        // additional bits
-                        if (aCodeDiv2.quot > 1)
+                        // Copy the data to the output buffer
+                        for (uint32_t i = 0; i < writeSize && outputPos < outputSize; ++i)
                         {
-                            uint8_t aWriteOffsetAddBits = static_cast<uint8_t>(aCodeDiv2.quot - 1);
-                            uint32_t aWriteOffsetAdd;
-                            ioInputBitArray.read(aWriteOffsetAddBits, aWriteOffsetAdd);
-                            aWriteOffset |= aWriteOffsetAdd;
-                            ioInputBitArray.drop(aWriteOffsetAddBits);
-                        }
-                        aWriteOffset += 1;
-
-                        uint32_t anAlreadyWritten = 0;
-                        while ((anAlreadyWritten < aWriteSize) &&
-                               (anOutputPos < iOutputSize))
-                        {
-                            ioOutputTab[anOutputPos] = ioOutputTab[anOutputPos - aWriteOffset];
-                            ++anOutputPos;
-                            ++anAlreadyWritten;
+                            outputBuffer[outputPos] = outputBuffer[outputPos - writeOffset];
+                            ++outputPos;
                         }
                     }
                 }
             }
+
         }
 
-        GW2DATTOOLS_API uint8_t *GW2DATTOOLS_APIENTRY inflateDatFileBuffer(uint32_t iInputSize, const uint8_t *iInputTab, uint32_t &ioOutputSize, uint8_t *ioOutputTab)
+        GW2DATTOOLS_API uint8_t *GW2DATTOOLS_APIENTRY inflateDatFileBuffer(
+            uint32_t inputSize,
+            const uint8_t *inputBuffer,
+            uint32_t &outputSize,
+            uint8_t *outputBuffer)
         {
-            if (iInputTab == nullptr)
+            if (inputBuffer == nullptr)
             {
                 throw exception::Exception("Input buffer is null.");
             }
 
-            if (ioOutputTab != nullptr && ioOutputSize == 0)
+            if (outputBuffer != nullptr && outputSize == 0)
             {
-                throw exception::Exception("Output buffer is not null and outputSize is not defined.");
+                throw exception::Exception("Output buffer is not null, but output size is undefined.");
             }
 
-            uint8_t *anOutputTab(nullptr);
-            bool isOutputTabOwned(true);
+            uint8_t *finalOutputBuffer = nullptr;
+            bool ownsBuffer = true; // Flag to track if memory needs to be freed
 
             try
             {
-                dat::DatFileBitArray anInputBitArray(iInputTab, iInputSize, 16384); // Skipping four bytes every 65k chunk
+                dat::DatFileBitArray inputBitArray(inputBuffer, inputSize, 16384);
+                inputBitArray.drop<uint32_t>(); // Skip header
+                uint32_t uncompressedSize;
+                inputBitArray.read(uncompressedSize);
+                std::cout << "\nUncompressed Size: " << uncompressedSize << "\n\n"
+                          << std::endl;
 
-                // Skipping header & Getting size of the uncompressed data
-                anInputBitArray.drop<uint32_t>();
+                inputBitArray.drop<uint32_t>(); // Skip another header part
 
-                // Getting size of the uncompressed data
-                uint32_t anOutputSize;
-                anInputBitArray.read(anOutputSize);
-                anInputBitArray.drop<uint32_t>();
-
-                if (ioOutputSize != 0)
+                if (outputSize != 0)
                 {
-                    anOutputSize = std::min(anOutputSize, ioOutputSize);
+                    uncompressedSize = std::min(uncompressedSize, outputSize);
                 }
 
-                ioOutputSize = anOutputSize;
+                outputSize = uncompressedSize; // Update output size
 
-                if (ioOutputTab == nullptr)
+                if (outputBuffer == nullptr)
                 {
-                    anOutputTab = static_cast<uint8_t *>(malloc(sizeof(uint8_t) * anOutputSize));
+                    finalOutputBuffer = static_cast<uint8_t *>(malloc(uncompressedSize));
+                    if (finalOutputBuffer == nullptr)
+                    {
+                        throw std::bad_alloc();
+                    }
                 }
                 else
                 {
-                    isOutputTabOwned = false;
-                    anOutputTab = ioOutputTab;
+                    ownsBuffer = false;
+                    finalOutputBuffer = outputBuffer;
                 }
 
-                dat::inflatedata(anInputBitArray, anOutputSize, anOutputTab);
+                dat::inflateData(inputBitArray, uncompressedSize, finalOutputBuffer);
 
-                return anOutputTab;
+                return finalOutputBuffer;
             }
-            catch (exception::Exception &iException)
+            catch (...)
             {
-                if (isOutputTabOwned)
+                if (ownsBuffer && finalOutputBuffer != nullptr)
                 {
-                    free(anOutputTab);
+                    free(finalOutputBuffer);
                 }
-                throw iException; // Rethrow exception
-            }
-            catch (std::exception &iException)
-            {
-                if (isOutputTabOwned)
-                {
-                    free(anOutputTab);
-                }
-                throw iException; // Rethrow exception
+                throw; // Rethrow any exception
             }
         }
 
@@ -277,280 +245,45 @@ namespace gw2dt
             dat::DatFileHuffmanTreeBuilder aDatFileHuffmanTreeBuilder;
             aDatFileHuffmanTreeBuilder.clear();
 
-            aDatFileHuffmanTreeBuilder.addSymbol(0x0A, 3);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x09, 3);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x08, 3);
+            // Define symbols and their corresponding bit lengths
+            std::vector<int> symbols = {0x0A, 0x09, 0x08, 0x0C, 0x0B, 0x07, 0x00, 0xE0, 0x2A, 0x29, 0x06, 0x4A, 0x40, 0x2C, 0x2B,
+                                        0x28, 0x20, 0x05, 0x04, 0x49, 0x48, 0x27, 0x26, 0x25, 0x0D, 0x03, 0x6A, 0x69, 0x4C, 0x4B,
+                                        0x47, 0x24, 0xE8, 0xA0, 0x89, 0x88, 0x68, 0x67, 0x63, 0x60, 0x46, 0x23, 0xE9, 0xC9, 0xC0,
+                                        0xA9, 0xA8, 0x8A, 0x87, 0x80, 0x66, 0x65, 0x45, 0x44, 0x43, 0x2D, 0x02, 0x01, 0xE5, 0xC8,
+                                        0xAA, 0xA5, 0xA4, 0x8B, 0x85, 0x84, 0x6C, 0x6B, 0x64, 0x4D, 0x0E, 0xE7, 0xCA, 0xC7, 0xA7,
+                                        0xA6, 0x86, 0x83, 0xE6, 0xE4, 0xC4, 0x8C, 0x2E, 0x22, 0xEC, 0xC6, 0x6D, 0x4E, 0xEA, 0xCC,
+                                        0xAC, 0xAB, 0x8D, 0x11, 0x10, 0x0F, 0xFF, 0xFE, 0xFD, 0xFC, 0xFB, 0xFA, 0xF9, 0xF8, 0xF7,
+                                        0xF6, 0xF5, 0xF4, 0xF3, 0xF2, 0xF1, 0xF0, 0xEF, 0xEE, 0xED, 0xEB, 0xE3, 0xE2, 0xE1, 0xDF,
+                                        0xDE, 0xDD, 0xDC, 0xDB, 0xDA, 0xD9, 0xD8, 0xD7, 0xD6, 0xD5, 0xD4, 0xD3, 0xD2, 0xD1, 0xD0,
+                                        0xCF, 0xCE, 0xCD, 0xCB, 0xC5, 0xC3, 0xC2, 0xC1, 0xBF, 0xBE, 0xBD, 0xBC, 0xBB, 0xBA, 0xB9,
+                                        0xB8, 0xB7, 0xB6, 0xB5, 0xB4, 0xB3, 0xB2, 0xB1, 0xB0, 0xAF, 0xAE, 0xAD, 0xA3, 0xA2, 0xA1,
+                                        0x9F, 0x9E, 0x9D, 0x9C, 0x9B, 0x9A, 0x99, 0x98, 0x97, 0x96, 0x95, 0x94, 0x93, 0x92, 0x91,
+                                        0x90, 0x8F, 0x8E, 0x82, 0x81, 0x7F, 0x7E, 0x7D, 0x7C, 0x7B, 0x7A, 0x79, 0x78, 0x77, 0x76,
+                                        0x75, 0x74, 0x73, 0x72, 0x71, 0x70, 0x6F, 0x6E, 0x62, 0x61, 0x5F, 0x5E, 0x5D, 0x5C, 0x5B,
+                                        0x5A, 0x59, 0x58, 0x57, 0x56, 0x55, 0x54, 0x53, 0x52, 0x51, 0x50, 0x4F, 0x42, 0x41, 0x3F,
+                                        0x3E, 0x3D, 0x3C, 0x3B, 0x3A, 0x39, 0x38, 0x37, 0x36, 0x35, 0x34, 0x33, 0x32, 0x31, 0x30,
+                                        0x2F, 0x21, 0x1F, 0x1E, 0x1D, 0x1C, 0x1B, 0x1A, 0x19, 0x18, 0x17, 0x16, 0x15, 0x14, 0x13,
+                                        0x12};
+            std::vector<int> bitLengths = {3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8,
+                                           8, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                                           1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                                           1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                                           1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                                           1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                                           1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                                           1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                                           1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
 
-            aDatFileHuffmanTreeBuilder.addSymbol(0x0C, 4);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x0B, 4);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x07, 4);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x00, 4);
-
-            aDatFileHuffmanTreeBuilder.addSymbol(0xE0, 5);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x2A, 5);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x29, 5);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x06, 5);
-
-            aDatFileHuffmanTreeBuilder.addSymbol(0x4A, 6);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x40, 6);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x2C, 6);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x2B, 6);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x28, 6);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x20, 6);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x05, 6);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x04, 6);
-
-            aDatFileHuffmanTreeBuilder.addSymbol(0x49, 7);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x48, 7);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x27, 7);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x26, 7);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x25, 7);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x0D, 7);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x03, 7);
-
-            aDatFileHuffmanTreeBuilder.addSymbol(0x6A, 8);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x69, 8);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x4C, 8);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x4B, 8);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x47, 8);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x24, 8);
-
-            aDatFileHuffmanTreeBuilder.addSymbol(0xE8, 9);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xA0, 9);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x89, 9);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x88, 9);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x68, 9);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x67, 9);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x63, 9);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x60, 9);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x46, 9);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x23, 9);
-
-            aDatFileHuffmanTreeBuilder.addSymbol(0xE9, 10);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xC9, 10);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xC0, 10);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xA9, 10);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xA8, 10);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x8A, 10);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x87, 10);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x80, 10);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x66, 10);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x65, 10);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x45, 10);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x44, 10);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x43, 10);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x2D, 10);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x02, 10);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x01, 10);
-
-            aDatFileHuffmanTreeBuilder.addSymbol(0xE5, 11);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xC8, 11);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xAA, 11);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xA5, 11);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xA4, 11);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x8B, 11);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x85, 11);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x84, 11);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x6C, 11);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x6B, 11);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x64, 11);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x4D, 11);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x0E, 11);
-
-            aDatFileHuffmanTreeBuilder.addSymbol(0xE7, 12);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xCA, 12);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xC7, 12);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xA7, 12);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xA6, 12);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x86, 12);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x83, 12);
-
-            aDatFileHuffmanTreeBuilder.addSymbol(0xE6, 13);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xE4, 13);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xC4, 13);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x8C, 13);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x2E, 13);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x22, 13);
-
-            aDatFileHuffmanTreeBuilder.addSymbol(0xEC, 14);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xC6, 14);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x6D, 14);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x4E, 14);
-
-            aDatFileHuffmanTreeBuilder.addSymbol(0xEA, 15);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xCC, 15);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xAC, 15);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xAB, 15);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x8D, 15);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x11, 15);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x10, 15);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x0F, 15);
-
-            aDatFileHuffmanTreeBuilder.addSymbol(0xFF, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xFE, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xFD, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xFC, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xFB, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xFA, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xF9, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xF8, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xF7, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xF6, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xF5, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xF4, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xF3, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xF2, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xF1, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xF0, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xEF, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xEE, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xED, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xEB, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xE3, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xE2, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xE1, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xDF, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xDE, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xDD, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xDC, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xDB, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xDA, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xD9, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xD8, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xD7, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xD6, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xD5, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xD4, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xD3, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xD2, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xD1, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xD0, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xCF, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xCE, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xCD, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xCB, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xC5, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xC3, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xC2, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xC1, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xBF, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xBE, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xBD, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xBC, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xBB, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xBA, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xB9, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xB8, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xB7, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xB6, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xB5, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xB4, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xB3, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xB2, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xB1, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xB0, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xAF, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xAE, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xAD, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xA3, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xA2, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0xA1, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x9F, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x9E, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x9D, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x9C, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x9B, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x9A, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x99, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x98, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x97, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x96, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x95, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x94, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x93, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x92, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x91, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x90, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x8F, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x8E, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x82, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x81, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x7F, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x7E, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x7D, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x7C, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x7B, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x7A, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x79, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x78, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x77, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x76, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x75, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x74, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x73, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x72, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x71, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x70, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x6F, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x6E, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x62, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x61, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x5F, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x5E, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x5D, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x5C, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x5B, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x5A, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x59, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x58, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x57, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x56, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x55, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x54, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x53, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x52, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x51, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x50, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x4F, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x42, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x41, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x3F, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x3E, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x3D, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x3C, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x3B, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x3A, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x39, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x38, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x37, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x36, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x35, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x34, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x33, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x32, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x31, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x30, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x2F, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x21, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x1F, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x1E, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x1D, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x1C, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x1B, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x1A, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x19, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x18, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x17, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x16, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x15, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x14, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x13, 16);
-            aDatFileHuffmanTreeBuilder.addSymbol(0x12, 16);
+            // Add each symbol with its corresponding bit length
+            for (size_t i = 0; i < symbols.size(); ++i)
+            {
+                aDatFileHuffmanTreeBuilder.addSymbol(symbols[i], bitLengths[i]);
+            }
 
             aDatFileHuffmanTreeBuilder.buildHuffmanTree(ioHuffmanTree);
         }
 
-        static DatFileHuffmanTreeDictStaticInitializer aDatFileHuffmanTreeDictStaticInitializer(dat::sDatFileHuffmanTreeDict);
+        static DatFileHuffmanTreeDictStaticInitializer aDatFileHuffmanTreeDictStaticInitializer(dat::huffmanTreeDictionary);
 
     }
 }

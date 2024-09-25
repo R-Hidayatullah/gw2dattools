@@ -4,13 +4,16 @@
 #include <memory>
 #include <cstdint>
 
-namespace gw2dt {
-    namespace format {
+namespace gw2dt
+{
+    namespace format
+    {
 
 #pragma pack(push, 1)
-        struct ANDatHeader {
-            uint8_t  version;
-            uint8_t  magic[3];
+        struct ANDatHeader
+        {
+            uint8_t version;
+            uint8_t magic[3];
             uint32_t headerSize;
             uint32_t unknown1;
             uint32_t chunkSize;
@@ -22,11 +25,12 @@ namespace gw2dt {
         };
 #pragma pack(pop)
 
-        struct ANDat {
+        struct ANDat
+        {
             ANDatHeader header;
         };
 
-        std::unique_ptr<ANDat> parseANDat( std::istream& iStream, const uint64_t& iOffset, const uint32_t iSize );
+        std::unique_ptr<ANDat> parseANDat(std::istream &iStream, const uint64_t &iOffset, const uint32_t iSize);
 
     }
 }

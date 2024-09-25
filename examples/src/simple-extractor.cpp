@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iomanip> // For hex output
 #include <cctype>  // For ASCII printing
+#include <memory>  // For std::unique_ptr
 
 #include <gw2dattools/interface/ANDatInterface.h>
 #include <gw2dattools/compression/inflateDatFileBuffer.h>
@@ -46,8 +47,9 @@ int main(int argc, char *argv[])
     auto aFileRecordVect = pANDatInterface->getFileRecordVect();
     std::cout << "Record Size: " << aFileRecordVect.size() << std::endl;
 
-    uint8_t *pOriBuffer = new uint8_t[aBufferSize];
-    uint8_t *pInfBuffer = new uint8_t[aBufferSize];
+    // Use unique_ptr with array specialization to manage memory automatically
+    std::unique_ptr<uint8_t[]> pOriBuffer = std::make_unique<uint8_t[]>(aBufferSize);
+    std::unique_ptr<uint8_t[]> pInfBuffer = std::make_unique<uint8_t[]>(aBufferSize);
 
     for (const auto &it : aFileRecordVect)
     {
@@ -57,30 +59,17 @@ int main(int argc, char *argv[])
         }
 
         uint32_t aOriSize = aBufferSize;
-        pANDatInterface->getBuffer(it, aOriSize, pOriBuffer);
+        pANDatInterface->getBuffer(it, aOriSize, pOriBuffer.get()); // Use get() to access the raw pointer
 
         std::cout << "Processing File: " << it.fileId << "\tFile Size: " << it.size << std::endl;
 
-        // Create filenames for compressed and uncompressed data
-        // std::ostringstream uncompressedFileName;
-        // std::ostringstream compressedFileName;
-        // uncompressedFileName << "./" << it.fileId << ".uncompressed";
-        // compressedFileName << "./" << it.fileId << ".compressed";
-
-        // // Open file streams for writing
-        // std::ofstream uncompressedFile(uncompressedFileName.str(), std::ios::binary | std::ios::out);
-        // std::ofstream compressedFile(compressedFileName.str(), std::ios::binary | std::ios::out);
-
         // Print first 15 bytes of the original (possibly compressed) data
-        printBuffer(pOriBuffer, aOriSize, "Original Data");
+        printBuffer(pOriBuffer.get(), aOriSize, "Original Data");
 
         if (aOriSize == aBufferSize)
         {
             std::cout << "File " << it.fileId << " has a size greater than (or equal to) 30Mb." << std::endl;
         }
-
-        // Write original buffer to the uncompressed file
-        // uncompressedFile.write(reinterpret_cast<const char *>(pOriBuffer), aOriSize);
 
         if (it.isCompressed)
         {
@@ -88,13 +77,10 @@ int main(int argc, char *argv[])
 
             try
             {
-                gw2dt::compression::inflateDatFileBuffer(aOriSize, pOriBuffer, aInfSize, pInfBuffer);
+                gw2dt::compression::inflateDatFileBuffer(aOriSize, pOriBuffer.get(), aInfSize, pInfBuffer.get());
 
                 // Print first 15 bytes of the decompressed data
-                printBuffer(pInfBuffer, aInfSize, "Decompressed Data");
-
-                // Write decompressed data to the compressed file
-                // compressedFile.write(reinterpret_cast<const char *>(pInfBuffer), aInfSize);
+                printBuffer(pInfBuffer.get(), aInfSize, "Decompressed Data");
             }
             catch (std::exception &iException)
             {
@@ -102,15 +88,8 @@ int main(int argc, char *argv[])
             }
         }
 
-        // // Close file streams
-        // uncompressedFile.close();
-        // compressedFile.close();
-
         break; // Exit after processing the specified file ID
     }
-
-    delete[] pOriBuffer;
-    delete[] pInfBuffer;
 
     return 0;
 }
